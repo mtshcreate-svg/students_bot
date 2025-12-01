@@ -1,8 +1,11 @@
 const { Telegraf } = require('telegraf');
 const sqlite3 = require('sqlite3').verbose();
 
-// 👉 ВСТАВ СЮДИ СВІЙ ТОКЕН
-const BOT_TOKEN = "8503102136:AAEwTajMmCIM3YZK5rny4pxCMu88itAaPUQ";
+// 👉 Токен: або з env (Render), або прямо в код
+const BOT_TOKEN = process.env.BOT_TOKEN || "8503102136:AAEwTajMmCIM3YZK5rny4pxCMu88itAaPUQ";
+// 👉 Необов'язково: стікер на /start (file_id)
+// можна винести в START_STICKER_ID в env
+const START_STICKER_ID = process.env.START_STICKER_ID || null;
 
 // 👉 РЕАЛЬНІ ID АДМІНІВ (числа з @userinfobot)
 const ADMIN_IDS = [517143184, 6146757092];
@@ -13,19 +16,21 @@ const db = new sqlite3.Database('./db.sqlite');
 // ─── ФАКУЛЬТЕТИ ───
 
 const FACULTY_NAMES = {
+  log: "Логістика",
   psy: "Психологія",
   eco: "Економіка",
-  it: "Інформатика"
+  law: "Право",
+  mng: "Управління",
+  other: "Інший"
 };
 
-const FACULTY_CODES = ["psy", "eco", "it"];
+const FACULTY_CODES = ["log", "psy", "eco", "law", "mng", "other"];
 
-// ─── СТАН ДЛЯ АДМІНІВ (РОЗСИЛКА / ПОШУК / REVOKE / ADD_EVENT) ───
+// ─── СТАН ДЛЯ АДМІНІВ ───
+// mode: "broadcast" | "search" | "revoke_access" | "add_event"
+const adminStates = {};
 
-const adminStates = {}; 
-// { [adminId]: { mode: "broadcast" | "search" | "revoke_access" | "add_event", step?, faculty?, date? } }
-
-// ─── БАЗА ───
+// ─── БАЗА ДАНИХ ───
 
 db.serialize(() => {
   db.run(`
@@ -75,7 +80,14 @@ function facultyButtons(prefix = "FAC_") {
 }
 
 function showUserMenu(ctx) {
-  ctx.reply("📋 Твоє меню:", {
+  const text =
+    "📋 *Твоє меню*\n\n" +
+    "• `📅 Календар` — події саме твого факультету\n" +
+    "• `🎓 Мій факультет` — подивитись, що обрав\n" +
+    "• `🔄 Змінити факультет` — відправити запит на зміну";
+
+  ctx.reply(text, {
+    parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
         [{ text: "📅 Календар", callback_data: "MENU_CALENDAR" }],
@@ -87,22 +99,42 @@ function showUserMenu(ctx) {
 }
 
 function showAdminPanel(ctx) {
-  ctx.reply("🛠 Адмін-панель:", {
+  const text =
+    "🛠 *Адмін-панель*\n\n" +
+    "Тут ти можеш керувати доступами, подіями та розсилками.";
+
+  ctx.reply(text, {
+    parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
-        [{ text: "📊 Статистика", callback_data: "ADM_STATS" }],
-        [{ text: "👥 Список юзерів", callback_data: "ADM_USERS" }],
-        [{ text: "📢 Розсилка", callback_data: "ADM_BROADCAST" }],
-        [{ text: "🔎 Пошук юзера", callback_data: "ADM_SEARCH" }],
-        [{ text: "🚫 Забрати доступ", callback_data: "ADM_REVOKE" }],
-        [{ text: "📅 Календар (адмін)", callback_data: "ADM_CALENDAR" }]
+        [
+          { text: "📊 Статистика", callback_data: "ADM_STATS" },
+          { text: "🆕 Нові юзери", callback_data: "ADM_RECENT" }
+        ],
+        [
+          { text: "⏳ Очікують доступу", callback_data: "ADM_PENDING" }
+        ],
+        [
+          { text: "👥 Список юзерів", callback_data: "ADM_USERS" }
+        ],
+        [
+          { text: "📢 Розсилка", callback_data: "ADM_BROADCAST" },
+          { text: "🔎 Пошук юзера", callback_data: "ADM_SEARCH" }
+        ],
+        [
+          { text: "🚫 Забрати доступ", callback_data: "ADM_REVOKE" }
+        ],
+        [
+          { text: "📅 Календар (адмін)", callback_data: "ADM_CALENDAR" }
+        ]
       ]
     }
   });
 }
 
 function showAdminCalendarMenu(ctx) {
-  ctx.reply("📅 Календар (адмін):", {
+  ctx.reply("📅 *Календар (адмін)*\n\nОберіть дію:", {
+    parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
         [{ text: "➕ Додати подію", callback_data: "ADM_CAL_ADD" }],
@@ -154,10 +186,9 @@ function sendCalendar(ctx, chatId) {
             { text: "🔄 Оновити", callback_data: "CAL_REFRESH" }
           ]);
 
-          ctx.reply("📅 Обери дату, щоб побачити події твого факультету:", {
-            reply_markup: {
-              inline_keyboard: keyboard
-            }
+          ctx.reply("📅 *Календар подій твого факультету*\n\nОберіть дату:", {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: keyboard }
           });
         }
       );
@@ -170,10 +201,11 @@ function ADMINIDS_notifyNewUser(chatId, username) {
     try {
       await bot.telegram.sendMessage(
         adminId,
-        `🆕 Новий користувач хоче доступ до бота:\n\n` +
-        `chat_id: ${chatId}\n` +
-        `username: @${username || "—"}`,
+        "🆕 *Нова заявка на доступ*\n\n" +
+        `*chat_id:* \`${chatId}\`\n` +
+        `*username:* @${username || "—"}`,
         {
+          parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
               [
@@ -192,10 +224,19 @@ function ADMINIDS_notifyNewUser(chatId, username) {
 
 // ─── /start ───
 
-bot.start(ctx => {
+bot.start(async ctx => {
   const chatId = String(ctx.chat.id);
   const username = ctx.from.username || "";
   const isAdm = isAdmin(ctx.from.id);
+
+  // Стікери на вітання (опціонально)
+  if (START_STICKER_ID) {
+    try {
+      await ctx.replyWithSticker(START_STICKER_ID);
+    } catch (e) {
+      console.log("Sticker error:", e.message);
+    }
+  }
 
   db.run(
     "INSERT OR IGNORE INTO users (chat_id, username, faculty, approved, request_sent) VALUES (?, ?, NULL, ?, 0)",
@@ -210,13 +251,16 @@ bot.start(ctx => {
       const approved = row?.approved === 1;
       const requestSent = row?.request_sent === 1;
 
+      // — якщо не адмін і немає доступу
       if (!isAdm && !approved) {
         if (!requestSent) {
-          ctx.reply(
-            "❌ У вас наразі немає доступу до бота.\n" +
-            "Зверніться до менеджера, щоб вас підключили.\n\n" +
-            "✅ Заявка відправлена. Після підтвердження просто надішліть /start ще раз."
-          );
+          const text =
+            "👋 *Привіт!*\n\n" +
+            "Це бот-підписка для студентів. Зараз ви ще _без доступу_.\n\n" +
+            "✅ *Заявка відправлена адміну.* Як тільки вас підтвердять — просто знову надішліть /start.";
+
+          ctx.reply(text, { parse_mode: "Markdown" });
+
           db.run(
             "UPDATE users SET request_sent = 1 WHERE chat_id = ?",
             [chatId]
@@ -224,27 +268,35 @@ bot.start(ctx => {
           ADMINIDS_notifyNewUser(chatId, username);
         } else {
           ctx.reply(
-            "⏳ Ваша заявка вже на розгляді.\n" +
-            "Будь ласка, зачекайте, поки менеджер надасть доступ."
+            "⏳ *Ваша заявка вже на розгляді.*\n\n" +
+            "Адмін перевіряє, зачекайте трохи 🙂",
+            { parse_mode: "Markdown" }
           );
         }
         return;
       }
 
+      // — користувач схвалений і вже має факультет
       if (faculty) {
-        ctx.reply("✅ У вас є доступ. Меню нижче 👇");
+        ctx.reply(
+          "✅ *Доступ активний.*\nОсь твоє меню 👇",
+          { parse_mode: "Markdown" }
+        );
         showUserMenu(ctx);
         return;
       }
 
-      ctx.reply(
-        "👋 Привіт! Це тестовий бот підписки.\nОбери свій факультет:",
-        {
-          reply_markup: {
-            inline_keyboard: facultyButtons("FAC_")
-          }
+      // — схвалений, але ще не вибрав факультет
+      const text =
+        "👋 *Ласкаво просимо!*\n\n" +
+        "Обери свій факультет, щоб отримувати персональні події та розсилки:";
+
+      ctx.reply(text, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: facultyButtons("FAC_")
         }
-      );
+      });
     }
   );
 });
@@ -257,7 +309,6 @@ bot.command("admin", ctx => {
 });
 
 // ─── /add_event (резерв, якщо захочеш руками) ───
-// формат: /add_event psy | 2025-12-01 | Назва події
 
 bot.command("add_event", ctx => {
   if (!isAdmin(ctx.from.id)) return;
@@ -266,7 +317,11 @@ bot.command("add_event", ctx => {
   const parts = raw.split("|").map(p => p.trim());
 
   if (parts.length < 3) {
-    ctx.reply("❗ Формат:\n/add_event psy | 2025-12-01 | Назва події");
+    ctx.reply(
+      "❗ *Формат:*\n" +
+      "`/add_event psy | 2025-12-01 | Назва події`",
+      { parse_mode: "Markdown" }
+    );
     return;
   }
 
@@ -275,7 +330,10 @@ bot.command("add_event", ctx => {
   const title = parts[2];
 
   if (!FACULTY_CODES.includes(faculty)) {
-    ctx.reply("Невірний faculty. Використовуй: " + FACULTY_CODES.join(", "));
+    ctx.reply(
+      "Невірний faculty. Використовуй один з:\n" +
+      FACULTY_CODES.map(c => `• ${c} — ${prettyFaculty(c)}`).join("\n")
+    );
     return;
   }
 
@@ -288,7 +346,9 @@ bot.command("add_event", ctx => {
         ctx.reply("Сталася помилка при додаванні події.");
         return;
       }
-      ctx.reply(`✅ Подію додано для факультету ${prettyFaculty(faculty)} на ${date}`);
+      ctx.reply(`✅ Подію додано для факультету *${prettyFaculty(faculty)}* на *${date}*`, {
+        parse_mode: "Markdown"
+      });
     }
   );
 });
@@ -316,7 +376,8 @@ bot.on('callback_query', ctx => {
 
     bot.telegram.sendMessage(
       targetId,
-      "✅ Вам надано доступ до бота.\nНапишіть /start, щоб продовжити.\n\nПосилання на чат: https://t.me/+8RWoLYUxHdc2ZTIy"
+      "✅ *Вам надано доступ до бота!*\n\nНадішліть /start, щоб продовжити.",
+      { parse_mode: "Markdown" }
     ).catch(() => {});
 
     ctx.editMessageText("✅ Доступ користувачу надано");
@@ -338,7 +399,8 @@ bot.on('callback_query', ctx => {
 
     bot.telegram.sendMessage(
       targetId,
-      "❌ Ваш запит на доступ до бота був відхилений.\nЗверніться до менеджера."
+      "❌ *Ваш запит на доступ відхилений.*\n\nЗверніться до менеджера.",
+      { parse_mode: "Markdown" }
     ).catch(() => {});
 
     ctx.editMessageText("❌ Запит на доступ відхилено");
@@ -361,7 +423,7 @@ bot.on('callback_query', ctx => {
           return;
         }
         ctx.editMessageReplyMarkup();
-        ctx.reply(`✅ Збережено факультет: ${nice}`);
+        ctx.reply(`✅ Збережено факультет: *${nice}*`, { parse_mode: "Markdown" });
         showUserMenu(ctx);
       }
     );
@@ -377,7 +439,7 @@ bot.on('callback_query', ctx => {
       (e, row) => {
         const code = row?.faculty;
         const nice = prettyFaculty(code);
-        ctx.reply(`🎓 Твій факультет: ${nice}`);
+        ctx.reply(`🎓 *Твій факультет:* ${nice}`, { parse_mode: "Markdown" });
       }
     );
     ctx.answerCbQuery();
@@ -391,11 +453,13 @@ bot.on('callback_query', ctx => {
   }
 
   if (data === "MENU_CHANGE_FACULTY") {
-    ctx.reply("Обери новий факультет, запит піде на підтвердження адмінам 👇", {
-      reply_markup: {
-        inline_keyboard: facultyButtons("REQ_")
+    ctx.reply(
+      "🔄 *Зміна факультету*\n\nОбери новий факультет, запит піде на підтвердження адмінам:",
+      {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: facultyButtons("REQ_") }
       }
-    });
+    );
     ctx.answerCbQuery();
     return;
   }
@@ -425,8 +489,9 @@ bot.on('callback_query', ctx => {
 
             const list = rows.map(e => `• ${e.title}`).join("\n");
             ctx.reply(
-              `📅 Події на ${date} для факультету ${prettyFaculty(user.faculty)}:\n\n` + list,
+              `📅 *Події на ${date}*\nФакультет: *${prettyFaculty(user.faculty)}*\n\n${list}`,
               {
+                parse_mode: "Markdown",
                 reply_markup: {
                   inline_keyboard: [
                     [{ text: "⬅ Назад до календаря", callback_data: "CAL_BACK" }]
@@ -467,18 +532,22 @@ bot.on('callback_query', ctx => {
           [chatId, oldCode, newCode]
         );
 
-        ctx.reply("✅ Запит на зміну факультету відправлено. Чекай рішення адміна.");
+        ctx.reply(
+          "✅ *Запит на зміну факультету відправлено.*\n\nЧекай рішення адміна.",
+          { parse_mode: "Markdown" }
+        );
         ctx.answerCbQuery();
 
         ADMIN_IDS.forEach(async (adminId) => {
           try {
             await bot.telegram.sendMessage(
               adminId,
-              `🔁 Запит на зміну факультету:\n\n` +
-              `chat_id: ${chatId}\n` +
+              "🔁 *Запит на зміну факультету*\n\n" +
+              `chat_id: \`${chatId}\`\n` +
               `З: ${oldNice}\n` +
               `На: ${newNice}`,
               {
+                parse_mode: "Markdown",
                 reply_markup: {
                   inline_keyboard: [
                     [
@@ -523,7 +592,8 @@ bot.on('callback_query', ctx => {
 
     bot.telegram.sendMessage(
       targetId,
-      `✅ Твій факультет змінено на: ${newNice}`
+      `✅ *Твій факультет змінено на:* ${newNice}`,
+      { parse_mode: "Markdown" }
     ).catch(() => {});
 
     ctx.editMessageText("✅ Зміну факультету схвалено");
@@ -546,7 +616,8 @@ bot.on('callback_query', ctx => {
 
     bot.telegram.sendMessage(
       targetId,
-      "❌ Запит на зміну факультету відхилено"
+      "❌ *Запит на зміну факультету відхилено.*",
+      { parse_mode: "Markdown" }
     ).catch(() => {});
 
     ctx.editMessageText("❌ Запит відхилено");
@@ -572,10 +643,9 @@ bot.on('callback_query', ctx => {
       return;
     }
     adminStates[fromId] = { mode: "add_event", step: "faculty" };
-    ctx.reply("📚 Обери факультет для події:", {
-      reply_markup: {
-        inline_keyboard: facultyButtons("ADDEV_FAC_")
-      }
+    ctx.reply("📚 *Додавання події*\n\nОберіть факультет:", {
+      parse_mode: "Markdown",
+      reply_markup: { inline_keyboard: facultyButtons("ADDEV_FAC_") }
     });
     ctx.answerCbQuery();
     return;
@@ -599,7 +669,8 @@ bot.on('callback_query', ctx => {
     };
 
     ctx.reply(
-      `✏ Обрано факультет: ${prettyFaculty(code)}\nВведи дату у форматі YYYY-MM-DD:`
+      `✏ Обрано факультет: *${prettyFaculty(code)}*\n\nВведи дату у форматі \`YYYY-MM-DD\`:`,
+      { parse_mode: "Markdown" }
     );
     ctx.answerCbQuery();
     return;
@@ -634,9 +705,7 @@ bot.on('callback_query', ctx => {
         ]));
 
         ctx.reply("🗑 Обери подію для видалення:", {
-          reply_markup: {
-            inline_keyboard: keyboard
-          }
+          reply_markup: { inline_keyboard: keyboard }
         });
       }
     );
@@ -674,7 +743,7 @@ bot.on('callback_query', ctx => {
     return;
   }
 
-  // H) адмін-панель: стата / юзери / розсилка / пошук / revoke
+  // H) адмін-панель: стата / юзери / розсилка / пошук / revoke / recent / pending
 
   if (data === "ADM_STATS") {
     if (!isAdmin(fromId)) {
@@ -688,11 +757,11 @@ bot.on('callback_query', ctx => {
         if (!rows || !rows.length) {
           ctx.reply("Поки що нема юзерів 🤷‍♂️");
         } else {
-          let text = "📊 Статистика по факультетах:\n\n";
+          let text = "📊 *Статистика по факультетах:*\n\n";
           rows.forEach(r => {
-            text += `${prettyFaculty(r.faculty)} — ${r.count}\n`;
+            text += `• ${prettyFaculty(r.faculty)} — *${r.count}*\n`;
           });
-          ctx.reply(text);
+          ctx.reply(text, { parse_mode: "Markdown" });
         }
       }
     );
@@ -718,7 +787,8 @@ bot.on('callback_query', ctx => {
 
       rows.forEach(u => {
         const line =
-          `👤 ${u.username || "—"} | ${u.chat_id} | ${prettyFaculty(u.faculty)} | approved: ${u.approved ? "✅" : "❌"}\n`;
+          `👤 @${u.username || "—"} | ID: \`${u.chat_id}\`\n` +
+          `   Факультет: ${prettyFaculty(u.faculty)} | Доступ: ${u.approved ? "✅" : "❌"}\n`;
         if ((current + line).length > 3500) {
           chunks.push(current);
           current = line;
@@ -728,7 +798,7 @@ bot.on('callback_query', ctx => {
       });
       if (current) chunks.push(current);
 
-      chunks.forEach(chunk => ctx.reply(chunk));
+      chunks.forEach(chunk => ctx.reply(chunk, { parse_mode: "Markdown" }));
     });
 
     ctx.answerCbQuery();
@@ -741,7 +811,9 @@ bot.on('callback_query', ctx => {
       return;
     }
     adminStates[fromId] = { mode: "broadcast" };
-    ctx.reply("📢 Введи текст розсилки (піде всім схваленим юзерам):");
+    ctx.reply("📢 Введи *текст розсилки* (піде всім *схваленим* юзерам):", {
+      parse_mode: "Markdown"
+    });
     ctx.answerCbQuery();
     return;
   }
@@ -752,7 +824,9 @@ bot.on('callback_query', ctx => {
       return;
     }
     adminStates[fromId] = { mode: "search" };
-    ctx.reply("🔎 Введи username (без @), я знайду юзерів:");
+    ctx.reply("🔎 Введи *username* (без @), я знайду юзерів:", {
+      parse_mode: "Markdown"
+    });
     ctx.answerCbQuery();
     return;
   }
@@ -763,7 +837,69 @@ bot.on('callback_query', ctx => {
       return;
     }
     adminStates[fromId] = { mode: "revoke_access" };
-    ctx.reply("🚫 Введи username (без @) або chat_id, щоб забрати доступ:");
+    ctx.reply("🚫 Введи *username* (без @) або *chat_id*, щоб забрати доступ:", {
+      parse_mode: "Markdown"
+    });
+    ctx.answerCbQuery();
+    return;
+  }
+
+  if (data === "ADM_RECENT") {
+    if (!isAdmin(fromId)) {
+      ctx.answerCbQuery("Ти не адмін", { show_alert: true });
+      return;
+    }
+
+    db.all(
+      "SELECT rowid, * FROM users ORDER BY rowid DESC LIMIT 10",
+      [],
+      (err, rows) => {
+        if (err || !rows || !rows.length) {
+          ctx.reply("Поки немає нових юзерів.");
+          return;
+        }
+
+        let text = "🆕 *Останні 10 юзерів:*\n\n";
+        rows.forEach(u => {
+          text +=
+            `• @${u.username || "—"} | ID: \`${u.chat_id}\`\n` +
+            `  Факультет: ${prettyFaculty(u.faculty)} | Доступ: ${u.approved ? "✅" : "❌"}\n\n`;
+        });
+
+        ctx.reply(text, { parse_mode: "Markdown" });
+      }
+    );
+
+    ctx.answerCbQuery();
+    return;
+  }
+
+  if (data === "ADM_PENDING") {
+    if (!isAdmin(fromId)) {
+      ctx.answerCbQuery("Ти не адмін", { show_alert: true });
+      return;
+    }
+
+    db.all(
+      "SELECT * FROM users WHERE approved = 0 AND request_sent = 1",
+      [],
+      (err, rows) => {
+        if (err || !rows || !rows.length) {
+          ctx.reply("Зараз немає заявок, що очікують доступу.");
+          return;
+        }
+
+        let text = "⏳ *Юзери, що очікують доступу:*\n\n";
+        rows.forEach(u => {
+          text +=
+            `• @${u.username || "—"} | ID: \`${u.chat_id}\`\n` +
+            `  Факультет: ${prettyFaculty(u.faculty)}\n\n`;
+        });
+
+        ctx.reply(text, { parse_mode: "Markdown" });
+      }
+    );
+
     ctx.answerCbQuery();
     return;
   }
@@ -771,7 +907,199 @@ bot.on('callback_query', ctx => {
   ctx.answerCbQuery();
 });
 
-// ─── МОДЕРАЦІЯ В ЧАТАХ (мут/бан) ───
+// ─── ТЕКСТОВІ ПОВІДОМЛЕННЯ (АДМІНСЬКІ СТАНИ) ───
+
+bot.on('text', async ctx => {
+  const chatType = ctx.chat.type;
+  const fromId = ctx.from.id;
+  const text = ctx.message.text || "";
+
+  // 1) Модерація в групах (мут/бан)
+  if ((chatType === "group" || chatType === "supergroup") && text.startsWith("!")) {
+    if (!isAdmin(fromId)) return;
+    await handleModeration(ctx);
+    return;
+  }
+
+  // 2) Адмінські стани — тільки в приваті
+  if (chatType !== "private" || !isAdmin(fromId)) return;
+
+  const state = adminStates[fromId];
+  if (!state) return;
+
+  // РОЗСИЛКА
+  if (state.mode === "broadcast") {
+    delete adminStates[fromId];
+
+    db.all("SELECT chat_id FROM users WHERE approved = 1", async (e, rows) => {
+      if (!rows || !rows.length) {
+        ctx.reply("Немає схвалених юзерів для розсилки.");
+        return;
+      }
+
+      let ok = 0;
+      let fail = 0;
+
+      for (const u of rows) {
+        try {
+          await bot.telegram.sendMessage(u.chat_id, text);
+          ok++;
+        } catch {
+          fail++;
+        }
+      }
+
+      ctx.reply(
+        "✅ *Розсилка завершена*\n\n" +
+        `📬 Всього користувачів: *${rows.length}*\n` +
+        `✅ Доставлено: *${ok}*\n` +
+        `❌ Не доставлено: *${fail}*`,
+        { parse_mode: "Markdown" }
+      );
+    });
+
+    return;
+  }
+
+  // ПОШУК ЮЗЕРА
+  if (state.mode === "search") {
+    delete adminStates[fromId];
+
+    const uname = text.replace("@", "");
+
+    db.all(
+      "SELECT * FROM users WHERE username LIKE ?",
+      [`%${uname}%`],
+      (e, rows) => {
+        if (!rows || !rows.length) {
+          ctx.reply("🔍 Нічого не знайдено.");
+          return;
+        }
+
+        const result = rows.map(u =>
+          `👤 @${u.username || "—"}\n` +
+          `ID: \`${u.chat_id}\`\n` +
+          `Факультет: ${prettyFaculty(u.faculty)}\n` +
+          `Доступ: ${u.approved ? "✅" : "❌"}`
+        ).join("\n\n");
+
+        ctx.reply(result, { parse_mode: "Markdown" });
+      }
+    );
+
+    return;
+  }
+
+  // ДОДАВАННЯ ПОДІЇ (чарівник)
+  if (state.mode === "add_event") {
+    if (state.step === "date") {
+      const date = text.trim();
+      const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
+      if (!ok) {
+        ctx.reply("❗ Невірний формат дати. Приклад: `2025-12-01`", {
+          parse_mode: "Markdown"
+        });
+        return;
+      }
+
+      adminStates[fromId].date = date;
+      adminStates[fromId].step = "title";
+      ctx.reply("📝 Введи *назву події*:", { parse_mode: "Markdown" });
+      return;
+    }
+
+    if (state.step === "title") {
+      const title = text.trim();
+      const { faculty, date } = adminStates[fromId];
+
+      db.run(
+        "INSERT INTO events (faculty, date, title) VALUES (?, ?, ?)",
+        [faculty, date, title],
+        err => {
+          if (err) {
+            console.error("add_event (wizard) error:", err);
+            ctx.reply("Сталася помилка при додаванні події.");
+            return;
+          }
+          ctx.reply(
+            "✅ *Подію додано:*\n\n" +
+            `Факультет: *${prettyFaculty(faculty)}*\n` +
+            `Дата: *${date}*\n` +
+            `Назва: *${title}*`,
+            { parse_mode: "Markdown" }
+          );
+          delete adminStates[fromId];
+        }
+      );
+
+      return;
+    }
+  }
+
+  // ЗАБРАТИ ДОСТУП (REVOKE)
+  if (state.mode === "revoke_access") {
+    delete adminStates[fromId];
+
+    const input = text.trim();
+    const isId = /^\d+$/.test(input);
+
+    if (isId) {
+      db.run(
+        "UPDATE users SET approved = 0, request_sent = 0 WHERE chat_id = ?",
+        [input],
+        function (err) {
+          if (err) {
+            console.error("revoke_access error:", err);
+            ctx.reply("Помилка при зміні доступу.");
+            return;
+          }
+          if (this.changes === 0) {
+            ctx.reply("Користувача з таким chat_id не знайдено.");
+          } else {
+            ctx.reply(`🚫 Доступ забрано у користувача з chat_id: \`${input}\``, {
+              parse_mode: "Markdown"
+            });
+          }
+        }
+      );
+    } else {
+      const uname = input.replace("@", "");
+      db.all(
+        "SELECT * FROM users WHERE username LIKE ?",
+        [`%${uname}%`],
+        (err, rows) => {
+          if (err) {
+            console.error("revoke_access search error:", err);
+            ctx.reply("Помилка при пошуку.");
+            return;
+          }
+          if (!rows || !rows.length) {
+            ctx.reply("Користувачів з таким username не знайдено.");
+            return;
+          }
+
+          const ids = rows.map(r => r.chat_id);
+          db.run(
+            `UPDATE users SET approved = 0, request_sent = 0 WHERE chat_id IN (${ids.map(()=>'?').join(',')})`,
+            ids,
+            function (e2) {
+              if (e2) {
+                console.error("revoke_access update many error:", e2);
+                ctx.reply("Помилка при зміні доступу.");
+                return;
+              }
+              ctx.reply(`🚫 Доступ забрано у *${ids.length}* користувача(ів).`, {
+                parse_mode: "Markdown"
+              });
+            }
+          );
+        }
+      );
+    }
+  }
+});
+
+// ─── МОДЕРАЦІЯ В ЧАТАХ (мут/бан командою !...) ───
 
 async function handleModeration(ctx) {
   const chatId = ctx.chat.id;
@@ -782,7 +1110,9 @@ async function handleModeration(ctx) {
 
   const reply = ctx.message.reply_to_message;
   if (!reply) {
-    await ctx.reply("Зроби реплай на повідомлення користувача, якого хочеш мут/баннути.");
+    await ctx.reply("Зроби *reply* на повідомлення юзера, якого хочеш мут/баннути.", {
+      parse_mode: "Markdown"
+    });
     return;
   }
 
@@ -821,7 +1151,9 @@ async function handleModeration(ctx) {
         until_date: untilDate
       });
 
-      await ctx.reply(`🔇 Користувач замучений на ${hours} год.`);
+      await ctx.reply(`🔇 Користувач замучений на *${hours} год.*`, {
+        parse_mode: "Markdown"
+      });
       return;
     }
 
@@ -838,211 +1170,29 @@ async function handleModeration(ctx) {
           can_pin_messages: false
         }
       });
-      await ctx.reply("🔊 Мут знято.");
+      await ctx.reply("🔊 *Мут знято.*", { parse_mode: "Markdown" });
       return;
     }
 
     if (isBan) {
       await ctx.telegram.banChatMember(chatId, targetId);
-      await ctx.reply("⛔ Користувача забанено.");
+      await ctx.reply("⛔ *Користувача забанено.*", { parse_mode: "Markdown" });
       return;
     }
 
     if (isUnban) {
       await ctx.telegram.unbanChatMember(chatId, targetId);
-      await ctx.reply("✅ Користувача розбанено.");
+      await ctx.reply("✅ *Користувача розбанено.*", { parse_mode: "Markdown" });
       return;
     }
   } catch (err) {
     console.error("Moderation error:", err);
-    await ctx.reply("⚠️ Не вдалось виконати дію. Перевір, чи бот адмін з правами.");
+    await ctx.reply(
+      "⚠️ Не вдалось виконати дію. Перевір, чи бот адмін у чаті і має права.",
+      { parse_mode: "Markdown" }
+    );
   }
 }
-
-// ─── ТЕКСТОВІ ПОВІДОМЛЕННЯ ───
-
-bot.on('text', async ctx => {
-  const chatType = ctx.chat.type;
-  const fromId = ctx.from.id;
-  const text = ctx.message.text || "";
-
-  // 1) МОДЕРАЦІЯ В ГРУПАХ
-  if ((chatType === "group" || chatType === "supergroup") && text.startsWith("!")) {
-    if (isAdmin(fromId)) {
-      await handleModeration(ctx);
-    }
-    return;
-  }
-
-  // 2) АДМІНСЬКІ СТАНИ (тільки в приваті)
-  if (chatType !== "private" || !isAdmin(fromId)) return;
-
-  const state = adminStates[fromId];
-  if (!state) return;
-
-  // РОЗСИЛКА
-  if (state.mode === "broadcast") {
-    delete adminStates[fromId];
-
-    db.all("SELECT chat_id FROM users WHERE approved = 1", async (e, rows) => {
-      if (!rows || !rows.length) {
-        ctx.reply("Немає схвалених юзерів для розсилки.");
-        return;
-      }
-
-      let ok = 0;
-      let fail = 0;
-
-      for (const u of rows) {
-        try {
-          await bot.telegram.sendMessage(u.chat_id, text);
-          ok++;
-        } catch {
-          fail++;
-        }
-      }
-
-      ctx.reply(
-        `✅ Розсилка завершена\n\n` +
-        `📬 Всього користувачів: ${rows.length}\n` +
-        `✅ Доставлено: ${ok}\n` +
-        `❌ Не доставлено: ${fail}`
-      );
-    });
-
-    return;
-  }
-
-  // ПОШУК
-  if (state.mode === "search") {
-    delete adminStates[fromId];
-
-    const uname = text.replace("@", "");
-
-    db.all(
-      "SELECT * FROM users WHERE username LIKE ?",
-      [`%${uname}%`],
-      (e, rows) => {
-        if (!rows || !rows.length) {
-          ctx.reply("🔍 Нічого не знайдено.");
-          return;
-        }
-
-        const result = rows.map(u =>
-          `👤 ${u.username || "—"}\n` +
-          `ID: ${u.chat_id}\n` +
-          `Факультет: ${prettyFaculty(u.faculty)}\n` +
-          `Доступ: ${u.approved ? "✅" : "❌"}`
-        ).join("\n\n");
-
-        ctx.reply(result);
-      }
-    );
-
-    return;
-  }
-
-  // ДОДАВАННЯ ПОДІЇ ЧЕРЕЗ АДМІН-МЕНЮ
-  if (state.mode === "add_event") {
-    if (state.step === "date") {
-      const date = text.trim();
-      const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
-      if (!ok) {
-        ctx.reply("❗ Невірний формат дати. Приклад: 2025-12-01");
-        return;
-      }
-
-      adminStates[fromId].date = date;
-      adminStates[fromId].step = "title";
-      ctx.reply("📝 Введи назву події:");
-      return;
-    }
-
-    if (state.step === "title") {
-      const title = text.trim();
-      const { faculty, date } = adminStates[fromId];
-
-      db.run(
-        "INSERT INTO events (faculty, date, title) VALUES (?, ?, ?)",
-        [faculty, date, title],
-        err => {
-          if (err) {
-            console.error("add_event (wizard) error:", err);
-            ctx.reply("Сталася помилка при додаванні події.");
-            return;
-          }
-          ctx.reply(
-            `✅ Подію додано:\n` +
-            `Факультет: ${prettyFaculty(faculty)}\n` +
-            `Дата: ${date}\n` +
-            `Назва: ${title}`
-          );
-          delete adminStates[fromId];
-        }
-      );
-
-      return;
-    }
-  }
-
-  // РОЗВАЙТЛИСТ / ЗАБРАТИ ДОСТУП
-  if (state.mode === "revoke_access") {
-    delete adminStates[fromId];
-
-    const input = text.trim();
-    const isId = /^\d+$/.test(input);
-
-    if (isId) {
-      db.run(
-        "UPDATE users SET approved = 0, request_sent = 0 WHERE chat_id = ?",
-        [input],
-        function (err) {
-          if (err) {
-            console.error("revoke_access error:", err);
-            ctx.reply("Помилка при зміні доступу.");
-            return;
-          }
-          if (this.changes === 0) {
-            ctx.reply("Користувача з таким chat_id не знайдено.");
-          } else {
-            ctx.reply(`🚫 Доступ забрано у користувача з chat_id: ${input}`);
-          }
-        }
-      );
-    } else {
-      const uname = input.replace("@", "");
-      db.all(
-        "SELECT * FROM users WHERE username LIKE ?",
-        [`%${uname}%`],
-        (err, rows) => {
-          if (err) {
-            console.error("revoke_access search error:", err);
-            ctx.reply("Помилка при пошуку.");
-            return;
-          }
-          if (!rows || !rows.length) {
-            ctx.reply("Користувачів з таким username не знайдено.");
-            return;
-          }
-
-          const ids = rows.map(r => r.chat_id);
-          db.run(
-            `UPDATE users SET approved = 0, request_sent = 0 WHERE chat_id IN (${ids.map(()=>'?').join(',')})`,
-            ids,
-            function (e2) {
-              if (e2) {
-                console.error("revoke_access update many error:", e2);
-                ctx.reply("Помилка при зміні доступу.");
-                return;
-              }
-              ctx.reply(`🚫 Доступ забрано у ${ids.length} користувача(ів).`);
-            }
-          );
-        }
-      );
-    }
-  }
-});
 
 // ─── ЗАПУСК ───
 
