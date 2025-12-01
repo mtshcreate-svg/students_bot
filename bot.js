@@ -373,7 +373,7 @@ bot.on('callback_query', ctx => {
 
     bot.telegram.sendMessage(
       targetId,
-      "✅ Вам надано доступ до бота!\n\nНадішліть /start, щоб продовжити."
+      "✅ Вам надано доступ до бота!\n\nНадішліть /start, щоб продовжити.\n\nПосилання на чат: https://t.me/+8RWoLYUxHdc2ZTIy"
     ).catch(() => {});
 
     ctx.editMessageText("✅ Доступ користувачу надано");
